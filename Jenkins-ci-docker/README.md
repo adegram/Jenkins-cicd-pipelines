@@ -12,34 +12,6 @@ The Jenkinsfile runs the following stages:
 4. **Docker Login** – Authenticates with Docker Hub using credentials stored in Jenkins.
 5. **Docker Tag and Push** – Tags the image and pushes it to Docker Hub.
 
-## Tools Used
-
-* Jenkins
-* Jenkins Pipeline
-* GitHub
-* Node.js
-* npm
-* Docker
-* Docker Hub
-
-## Pipeline
-
-```text
-GitHub
-   ↓
-Clone Repository
-   ↓
-npm install
-   ↓
-Docker Build
-   ↓
-Docker Login
-   ↓
-Tag Image
-   ↓
-Push to Docker Hub
-```
-
 ## Docker Image
 
 The pipeline builds:
@@ -48,7 +20,7 @@ The pipeline builds:
 api-gateway:latest
 ```
 
-It then tags and pushes the image to:
+It then tags and pushes the image to my dockerhub registry:
 
 ```bash
 adehorizon/api-gateway:latest
@@ -64,33 +36,19 @@ tools {
 }
 ```
 
-Docker Hub credentials are stored in Jenkins and accessed using the credential ID:
-
-```text
-dockerhub-id
-```
+## About the Jenkinsfile
 
 The credentials are injected into the pipeline using Jenkins' `withCredentials` block rather than being written directly into the Jenkinsfile.
 
-## Repository Structure
+- The pipeline is written using Jenkins Declarative Pipeline syntax and can be run from a Jenkins Pipeline job. 
 
-The pipeline expects the API Gateway to be located at:
+- Docker Hub credentials are consumed through Jenkins Credentialsusing the credential ID: dockerhub-id; pull request/feature branch jobs stop before publication.
 
-```text
-services/
-└── api-gateway/
-    ├── Dockerfile
-    ├── package.json
-    └── ...
-```
+- Docker Hub credentials are consumed through Jenkins Credentials; pull request/feature branch jobs stop before publication.
 
-## Jenkinsfile
-
-The pipeline is written using Jenkins Declarative Pipeline syntax and can be run from a Jenkins Pipeline job.
 
 ## Next Steps
-
-Some improvements I will be adding to other pipelines:
+Some improvements I may be adding to the pipeline:
 
 * Automated tests
 * SonarQube code analysis

@@ -1,53 +1,69 @@
 pipeline {
-    agent any
-    tools {
-        nodejs 'NodeJS 23.0.0'
+  agent { label 'docker && node24' }
+  options {
+    timestamps()
+    disableConcurrentBuilds()
+    buildDiscarder(logRotator(numToKeepStr: '20'))
+    timeout(time: 30, unit: 'MINUTES')
+    skipDefaultCheckout(true)
+  }
+  environment {
+    IMAGE_REPOSITORY = 'adehorizon/api-gateway'
+    DOCKER_CONFIG = "${WORKSPACE}/.docker"
+  }
+  stages {
+    stage('Checkout pipeline repository') { steps { checkout scm } }
+    stage('Checkout application source') {
+      steps {
+        dir('application') {
+          git branch: 'main', changelog: false, poll: false, url: 'https://github.com/adegram/ministore-microservices.git'
+        }
+      }
     }
-
-    stages {
-        stage('Clone Github Repository') {
-            steps {
-                git branch: 'main', changelog: false, poll: false, url: 'https://github.com/adegram/ministore-microservices.git'
-                sh 'pwd'
-            }
+    stage('Install, lint and test') {
+      steps {
+        dir('application/services/api-gateway') {
+          sh '''#!/usr/bin/env bash
+            set -Eeuo pipefail
+            npm ci
+            npm run lint --if-present
+            npm test --if-present
+          '''
         }
-        stage('Build') {
-            steps {
-                dir('services/api-gateway') {
-                    sh 'npm --version'
-                    sh 'npm install'
-                }
-            }
+      }
+    }
+    stage('Build immutable image') {
+      steps {
+        script {
+          env.IMAGE_TAG = env.GIT_COMMIT ? env.GIT_COMMIT.take(12) : "build-${env.BUILD_NUMBER}"
+          env.IMAGE = "${env.IMAGE_REPOSITORY}:${env.IMAGE_TAG}"
         }
-        stage('Docker image Build') {
-            steps {
-                dir('services/api-gateway') {
-                    sh 'docker build -t api-gateway:latest .'
-                }
-            }
-        } //dockerhub-id
-        stage('Docker Login') {
-            steps { // uses the Username/Password credential we added in Jenkins 
-                withCredentials([
-                    usernamePassword(
-                        credentialsId: 'dockerhub-id', 
-                        usernameVariable: 'DOCKER_USER', 
-                        passwordVariable: 'DOCKER_PASS'
-                        )
-                    ]) { 
-                        sh 'echo $DOCKER_PASS | docker login -u $DOCKER_USER --password-stdin' 
-                } 
-            } 
-        } 
-        stage('Docker Tag and Push') {
-            steps {
-                dir('services/api-gateway') {
-                    sh '''
-                    docker tag api-gateway:latest adehorizon/api-gateway:latest
-                    docker push adehorizon/api-gateway:latest
-                    '''
-                }
-            }
+        sh 'docker build --pull --tag "$IMAGE" application/services/api-gateway'
+      }
+    }
+    stage('Scan image') {
+      steps { sh 'trivy image --exit-code 1 --ignore-unfixed --severity HIGH,CRITICAL "$IMAGE"' }
+    }
+    stage('Publish image') {
+      when { branch 'main' }
+      steps {
+        withCredentials([usernamePassword(credentialsId: 'dockerhub-id', usernameVariable: 'DOCKER_USER', passwordVariable: 'DOCKER_PASS')]) {
+          sh '''#!/usr/bin/env bash
+            set -Eeuo pipefail
+            install -d -m 0700 "$DOCKER_CONFIG"
+            printf '%s' "$DOCKER_PASS" | docker login --username "$DOCKER_USER" --password-stdin
+            docker push "$IMAGE"
+          '''
         }
-}
+      }
+    }
+  }
+  post {
+    always {
+      sh 'docker logout || true'
+      sh 'docker image rm -f "$IMAGE" >/dev/null 2>&1 || true'
+      deleteDir()
+    }
+    failure { echo 'Pipeline failed; inspect stage logs before retrying the publication.' }
+  }
 }
