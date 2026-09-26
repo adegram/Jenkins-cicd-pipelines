@@ -45,7 +45,7 @@ The collection may include:
 
 ## Project Structure
 
-Each pipeline is kept in its own directory.
+I've Kept each pipeline in its own directory.
 
 ```text
 Jenkins-cicd-pipelines/
