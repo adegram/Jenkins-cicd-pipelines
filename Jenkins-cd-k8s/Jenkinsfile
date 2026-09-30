@@ -1,0 +1,57 @@
+pipeline {
+  agent { label 'kubectl' }
+  options {
+    timestamps()
+    disableConcurrentBuilds()
+    buildDiscarder(logRotator(numToKeepStr: '25'))
+    timeout(time: 20, unit: 'MINUTES')
+    skipDefaultCheckout(true)
+  }
+  parameters {
+    string(name: 'IMAGE', defaultValue: '', description: 'Required immutable image reference, for example registry.example/app@sha256:…')
+  }
+  stages {
+    stage('Checkout') { steps { checkout scm } }
+    stage('Validate manifests') {
+      steps {
+        sh 'kubectl kustomize Jenkins-cd-k8s/manifests > rendered.yaml'
+        sh 'test -s rendered.yaml'
+      }
+    }
+    stage('Require immutable image') {
+      when { branch 'main' }
+      steps {
+        script {
+          if (!params.IMAGE?.trim() || !(params.IMAGE ==~ /.+@sha256:[a-f0-9]{64}/)) {
+            error('Deployments require IMAGE to be pinned by sha256 digest.')
+          }
+        }
+      }
+    }
+    stage('Production approval') {
+      when { branch 'main' }
+      input {
+        message "Approve production rollout of ${params.IMAGE}?"
+        ok 'Deploy to production'
+        submitter 'release-managers'
+      }
+      steps { echo 'Production deployment approved.' }
+    }
+    stage('Production rollout') {
+      when { branch 'main' }
+      steps {
+        withCredentials([file(credentialsId: 'kubeconfig-prod', variable: 'KUBECONFIG')]) {
+          sh '''#!/usr/bin/env bash
+            set -Eeuo pipefail
+            sed "s#IMAGE_PLACEHOLDER#$IMAGE#g" rendered.yaml | kubectl apply -f -
+            kubectl rollout status deployment/app -n production --timeout=180s
+          '''
+        }
+      }
+    }
+  }
+  post {
+    always { archiveArtifacts artifacts: 'rendered.yaml', allowEmptyArchive: true }
+    failure { echo 'Rollout failed; inspect deployment events and use the cluster rollback procedure.' }
+  }
+}
