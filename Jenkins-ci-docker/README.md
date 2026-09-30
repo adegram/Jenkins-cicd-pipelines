@@ -1,59 +1,138 @@
-# Jenkins CI Pipeline
+# Jenkins CI/CD Pipeline
 
-This folder contains a Jenkins pipeline that performs Continuous Integration only. The pipeline handles the application build, Docker image creation, Docker Hub authentication, and image push.
+Jenkins pipeline for building, scanning, and publishing the `api-gateway` container image from the [Ministore Microservices](https://github.com/adegram/ministore-microservices) application.
 
-## What the pipeline does
+## Overview
 
-The Jenkinsfile runs the following stages:
+This pipeline provides a controlled container build workflow:
 
-1. **Clone Repository** – Pulls the `main` branch from GitHub.
-2. **Build** – Enters the API Gateway directory and installs the Node.js dependencies.
-3. **Docker Image Build** – Builds the API Gateway Docker image.
-4. **Docker Login** – Authenticates with Docker Hub using credentials stored in Jenkins.
-5. **Docker Tag and Push** – Tags the image and pushes it to Docker Hub.
+- Checks out the Jenkins pipeline repository.
+- Checks out the application source from `main`.
+- Installs dependencies and runs linting and tests.
+- Builds the Docker image using a commit-based tag.
+- Scans the image with Trivy for HIGH and CRITICAL vulnerabilities.
+- Publishes the image to Docker Hub from `main`.
+- Cleans up credentials, images, and workspace data after each build.
 
-## Docker Image
+## Pipeline Flow
 
-The pipeline builds:
-
-```bash
-api-gateway:latest
+```text
+Checkout Pipeline Repository
+            ↓
+Checkout Application Source
+            ↓
+Install Dependencies / Lint / Test
+            ↓
+Build Docker Image
+            ↓
+Trivy Image Scan
+            ↓
+Publish to Docker Hub (main only)
 ```
 
-It then tags and pushes the image to my dockerhub registry:
+## Repository Structure
 
-```bash
-adehorizon/api-gateway:latest
+```text
+.
+├── Jenkinsfile
+└── application/
+    └── services/
+        └── api-gateway/
 ```
 
-## Jenkins Configuration
+The application source is checked out into the Jenkins workspace at runtime.
 
-The pipeline uses Node.js `23.0.0`, configured through Jenkins:
+## Image Build
 
-```groovy
-tools {
-    nodejs 'NodeJS 23.0.0'
-}
+The image repository is defined as:
+
+```text
+adehorizon/api-gateway
 ```
 
-## About the Jenkinsfile
+The image tag is derived from the application Git commit:
 
-The credentials are injected into the pipeline using Jenkins' `withCredentials` block rather than being written directly into the Jenkinsfile.
+```text
+<12-character-commit-sha>
+```
 
-- The pipeline is written using Jenkins Declarative Pipeline syntax and can be run from a Jenkins Pipeline job. 
+If the commit SHA is unavailable, the Jenkins build number is used:
 
-- Docker Hub credentials are consumed through Jenkins Credentialsusing the credential ID: dockerhub-id; pull request/feature branch jobs stop before publication.
+```text
+build-<BUILD_NUMBER>
+```
 
-- Docker Hub credentials are consumed through Jenkins Credentials; pull request/feature branch jobs stop before publication.
+Example:
 
+```text
+adehorizon/api-gateway:abc123def456
+```
 
-## Next Steps
-Some improvements I may be adding to the pipeline:
+## Security
 
-* Automated tests
-* SonarQube code analysis
-* Docker image vulnerability scanning
-* Versioned Docker image tags
-* GitHub webhook trigger
-* Deployment to Kubernetes
-* Argo CD for continuous deployment
+The pipeline includes:
+
+- `npm ci` for reproducible dependency installation.
+- Trivy scanning with HIGH and CRITICAL severity thresholds.
+- Docker Hub credentials managed through Jenkins Credentials.
+- Non-interactive Docker authentication using `--password-stdin`.
+- A workspace-scoped Docker configuration directory.
+- Post-build cleanup of Docker credentials, images, and workspace data.
+
+## Jenkins Credentials
+
+The pipeline expects the following Jenkins credential:
+
+```text
+dockerhub-id
+```
+
+The credential should be configured as a Jenkins **Username with password** credential and is used only during image publication.
+
+## Requirements
+
+The Jenkins agent must provide:
+
+- Jenkins
+- Git
+- Docker
+- Node.js 24
+- npm
+- Trivy
+
+The Jenkins agent used by the pipeline must have the labels:
+
+```text
+docker
+node24
+```
+
+## Publication
+
+Images are published only when the pipeline runs against:
+
+```text
+main
+```
+
+Feature or non-main branches still run the checkout, dependency, test, build, and image-scan stages but do not push the image to Docker Hub.
+
+## Cleanup
+
+After every build, the pipeline:
+
+```text
+docker logout
+        ↓
+Remove local image
+        ↓
+Delete Jenkins workspace
+```
+
+This keeps registry session data, local images, and workspace contents from persisting between builds.
+
+## Failure Handling
+
+A failed lint, test, image build, or Trivy scan stops the pipeline before publication.
+
+If publication fails, inspect the relevant stage logs before retrying the build.

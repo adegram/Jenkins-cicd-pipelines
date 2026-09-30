@@ -1,25 +1,43 @@
 pipeline {
+
   agent { label 'docker && node24' }
+  // Run on an agent with Docker and Node.js 24 available.
+
   options {
     timestamps()
     disableConcurrentBuilds()
     buildDiscarder(logRotator(numToKeepStr: '20'))
     timeout(time: 30, unit: 'MINUTES')
     skipDefaultCheckout(true)
+    // Add timestamps, prevent concurrent runs, retain the last 20 builds,
+    // enforce a 30-minute timeout, and handle SCM checkout explicitly.
   }
+
   environment {
     IMAGE_REPOSITORY = 'adehorizon/api-gateway'
     DOCKER_CONFIG = "${WORKSPACE}/.docker"
+    // Define the target image repository and isolate Docker authentication
+    // within the Jenkins workspace.
   }
+
   stages {
-    stage('Checkout pipeline repository') { steps { checkout scm } }
+
+    stage('Checkout pipeline repository') {
+      steps {
+        checkout scm
+        // Checkout the repository containing this Jenkinsfile.
+      }
+    }
+
     stage('Checkout application source') {
       steps {
         dir('application') {
           git branch: 'main', changelog: false, poll: false, url: 'https://github.com/adegram/ministore-microservices.git'
+          // Checkout the application source into a dedicated workspace directory.
         }
       }
     }
+
     stage('Install, lint and test') {
       steps {
         dir('application/services/api-gateway') {
@@ -29,41 +47,71 @@ pipeline {
             npm run lint --if-present
             npm test --if-present
           '''
+           // Install locked dependencies, then run linting and tests when defined.
+
         }
       }
     }
+
     stage('Build immutable image') {
       steps {
         script {
           env.IMAGE_TAG = env.GIT_COMMIT ? env.GIT_COMMIT.take(12) : "build-${env.BUILD_NUMBER}"
           env.IMAGE = "${env.IMAGE_REPOSITORY}:${env.IMAGE_TAG}"
+          // Tag the image from the source commit, with the build number as fallback.
         }
+
         sh 'docker build --pull --tag "$IMAGE" application/services/api-gateway'
+        // Build the application image using the generated immutable tag.
       }
     }
+
     stage('Scan image') {
-      steps { sh 'trivy image --exit-code 1 --ignore-unfixed --severity HIGH,CRITICAL "$IMAGE"' }
+      steps {
+        sh 'trivy image --exit-code 1 --ignore-unfixed --severity HIGH,CRITICAL "$IMAGE"'
+        // Fail the pipeline when HIGH or CRITICAL vulnerabilities are detected.
+      }
     }
+
     stage('Publish image') {
       when { branch 'main' }
+      // Publish images only from the main branch.
+
       steps {
-        withCredentials([usernamePassword(credentialsId: 'dockerhub-id', usernameVariable: 'DOCKER_USER', passwordVariable: 'DOCKER_PASS')]) {
+        withCredentials([
+          usernamePassword(
+            credentialsId: 'dockerhub-id',
+            usernameVariable: 'DOCKER_USER',
+            passwordVariable: 'DOCKER_PASS'
+          )
+        ]) {
+          // Inject Docker Hub credentials only for the publication step.
+
           sh '''#!/usr/bin/env bash
             set -Eeuo pipefail
             install -d -m 0700 "$DOCKER_CONFIG"
             printf '%s' "$DOCKER_PASS" | docker login --username "$DOCKER_USER" --password-stdin
             docker push "$IMAGE"
           '''
+            // Create a restricted Docker config, authenticate non-interactively,
+            // and publish the image.
         }
       }
     }
   }
+
   post {
     always {
       sh 'docker logout || true'
       sh 'docker image rm -f "$IMAGE" >/dev/null 2>&1 || true'
       deleteDir()
+      // Remove registry credentials/session data, clean the local image,
+      // and clear the workspace after every build.
     }
-    failure { echo 'Pipeline failed; inspect stage logs before retrying the publication.' }
+
+    failure {
+      echo 'Pipeline failed; inspect stage logs before retrying the publication.'
+      // Surface failed-stage logs before retrying a publication.
+    }
   }
 }
