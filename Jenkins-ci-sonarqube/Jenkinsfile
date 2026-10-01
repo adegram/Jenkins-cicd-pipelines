@@ -1,0 +1,98 @@
+pipeline {
+  agent { label 'node24 && sonar-scanner' }
+  // Run on an agent with Node.js 24 and SonarScanner available.
+
+  options {
+    timestamps()
+    disableConcurrentBuilds()
+    buildDiscarder(logRotator(numToKeepStr: '20'))
+    timeout(time: 30, unit: 'MINUTES')
+    skipDefaultCheckout(true)
+    // Add timestamps, prevent concurrent runs, retain the last 20 builds,
+    // enforce a 30-minute timeout, and handle SCM checkout explicitly.
+  }
+
+  parameters {
+    string(name: 'APP_REPOSITORY', defaultValue: 'https://github.com/adegram/ministore-microservices.git', description: 'Application repository to analyze')
+    string(name: 'APP_REF', defaultValue: 'main', description: 'Application branch or tag to analyze')
+    string(name: 'SONAR_PROJECT_KEY', defaultValue: 'portfolio-service', description: 'Project key configured in SonarQube')
+    // Allow the repository, Git ref, and SonarQube project to be selected at build time.
+  }
+
+  stages {
+
+    stage('Checkout pipeline') {
+      steps {
+        checkout scm
+        // Checkout the repository containing the Jenkins pipeline.
+      }
+    }
+
+    stage('Checkout application') {
+      steps {
+        dir('application') {
+          git branch: params.APP_REF, changelog: false, poll: false, url: params.APP_REPOSITORY
+          // Checkout the selected application ref into a dedicated workspace directory.
+        }
+      }
+    }
+
+    stage('Install and test') {
+      steps {
+        dir('application/services/api-gateway') {
+          sh '''#!/usr/bin/env bash
+            set -Eeuo pipefail
+            npm ci
+            npm run lint --if-present
+            npm test --if-present
+            npm run test:coverage --if-present
+          '''
+          // Install locked dependencies, then run linting, tests, and coverage when configured.
+
+        }
+      }
+    }
+
+    stage('SonarQube analysis') {
+      steps {
+        withSonarQubeEnv('sonarqube') {
+          // Inject the configured SonarQube server environment for the analysis.
+
+          dir('application/services/api-gateway') {
+            sh '''
+            sonar-scanner               
+            -Dsonar.projectKey="$SONAR_PROJECT_KEY"               
+            -Dsonar.sources=.               
+            -Dsonar.exclusions=node_modules/**,coverage/**               
+            -Dsonar.javascript.lcov.reportPaths=coverage/lcov.info               
+            -Dsonar.scm.revision="$GIT_COMMIT"'''
+            // Analyze application source, exclude generated dependencies/coverage files,
+            // and publish the LCOV coverage report with SCM revision metadata.
+          }
+        }
+      }
+    }
+
+    stage('Quality gate') {
+      steps {
+        timeout(time: 5, unit: 'MINUTES') {
+          waitForQualityGate(abortPipeline: true)
+          // Block the pipeline until SonarQube evaluates the analysis; abort on gate failure.
+        }
+      }
+    }
+  }
+
+  post {
+
+    always {
+      archiveArtifacts artifacts: 'application/services/api-gateway/coverage/**', allowEmptyArchive: true
+      // Preserve generated coverage reports for build-level inspection.
+    }
+
+    failure {
+      echo 'The branch is not releasable until tests and the configured SonarQube quality gate pass.'
+      // Surface the release condition when validation or the quality gate fails.
+    }
+  }
+}
