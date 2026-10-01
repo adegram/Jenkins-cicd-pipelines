@@ -135,3 +135,9 @@ application/services/api-gateway/coverage/**
 
 This preserves coverage data for troubleshooting and build inspection.
 
+
+## Failure Handling
+
+A failure during dependency installation, linting, testing, SonarQube analysis, or the quality gate causes the pipeline to fail.
+
+The application should not be considered releasable until the configured tests and SonarQube quality gate pass.
