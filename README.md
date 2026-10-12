@@ -42,22 +42,6 @@ The collection may include:
 - Argo CD
 - Prometheus & Grafana
 - Security scanning tools
-
-## Project Structure
-
-```text
-Jenkins-cicd-pipelines/
-│
-├── pipeline-project-1/
-│   ├── Jenkinsfile
-│   └── README.md
-│
-├── pipeline-project-2/
-│   ├── Jenkinsfile
-│   └── README.md
-│
-├── pipeline-project-3/
-│   ├── Jenkinsfile
 │   └── README.md
 │
 └── README.md
